@@ -27,11 +27,13 @@ Většina CLI nástrojů vzniká pro lidi a stroje jejich výstup parsují až d
 
 ## Instalace
 
-Stáhněte si binárku z [Releases](https://github.com/HonzaTuron/seznam-webmaster-cli/releases), nebo si ji sestavte pomocí Go 1.26+:
+S Go 1.26 nebo novějším:
 
 ```bash
 go install github.com/HonzaTuron/seznam-webmaster-cli/cmd/szwm@latest
 ```
+
+Předpřipravené binárky budou na stránce [Releases](https://github.com/HonzaTuron/seznam-webmaster-cli/releases), jakmile vyjde první verze.
 
 ## Rychlý start
 

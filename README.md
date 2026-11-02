@@ -27,11 +27,13 @@ Most CLIs are built for people and later parsed by machines. `szwm` is designed 
 
 ## Installation
 
-Download a binary from [Releases](https://github.com/HonzaTuron/seznam-webmaster-cli/releases), or build with Go 1.26+:
+With Go 1.26 or newer:
 
 ```bash
 go install github.com/HonzaTuron/seznam-webmaster-cli/cmd/szwm@latest
 ```
+
+Prebuilt binaries appear on the [Releases](https://github.com/HonzaTuron/seznam-webmaster-cli/releases) page once a version is released.
 
 ## Quick start
 
