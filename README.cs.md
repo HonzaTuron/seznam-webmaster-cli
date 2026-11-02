@@ -1,5 +1,6 @@
 # szwm: CLI pro Seznam Webmaster
 
+[![CI](https://github.com/HonzaTuron/seznam-webmaster-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/HonzaTuron/seznam-webmaster-cli/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.md) | **Čeština**
