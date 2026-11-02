@@ -269,8 +269,10 @@ func (a *app) mcpCmd() *cobra.Command {
 		Short: "Run a Model Context Protocol server on stdio",
 		Long: `Expose szwm as MCP tools over stdio. --profile sets the default; each tool also
 accepts a profile argument. With --read-only the reindex tool is not registered.
-This is an unofficial server, not a Seznam product.`,
-		Example:     `  claude mcp add seznam-webmaster -- szwm mcp --read-only`,
+This is an unofficial server, not a Seznam product.
+
+To register it in Claude Code, use 'szwm mcp install'.`,
+		Example:     `  szwm mcp install`,
 		Args:        cobra.NoArgs,
 		Annotations: meta("read", "optional", "", "false", "per tool call", "MCP protocol on stdout"),
 	}
@@ -293,5 +295,6 @@ This is an unofficial server, not a Seznam product.`,
 		}
 		return nil
 	}
+	cmd.AddCommand(a.mcpInstallCmd())
 	return cmd
 }

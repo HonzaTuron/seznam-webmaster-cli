@@ -75,6 +75,7 @@ type Trend struct {
 // Report is the site health summary.
 type Report struct {
 	Severity    string             `json:"severity"`
+	Site        string             `json:"site,omitempty"`
 	GeneratedAt string             `json:"generated_at"`
 	DataRelease string             `json:"data_release,omitempty"`
 	Totals      map[string]int64   `json:"totals"`
@@ -119,6 +120,9 @@ func Evaluate(web map[string]any, release string, windowDays int, now time.Time)
 		Totals:      map[string]int64{},
 		Ratios:      map[string]float64{},
 		Findings:    []Finding{},
+	}
+	if w, ok := web["webserver"].(string); ok {
+		r.Site = SiteFromWebserver(w)
 	}
 	docs, _ := web["documents"].(map[string]any)
 	for k, v := range docs {

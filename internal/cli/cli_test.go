@@ -63,9 +63,10 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/web":
-		fmt.Fprint(w, `{"documents":{"doc_count":130,"content":{"count":100,"urls":["https://example.com/1"]},
+		fmt.Fprint(w, `{"documents":{"doc_count":{"count":130,"urls":[]},"content":{"count":100,"urls":["https://example.com/1"]},
 			"index":{"count":90,"urls":["https://example.com/2","https://example.com/3"]},
 			"redirect":{"count":0,"urls":[]},"error":{"count":2,"urls":["https://example.com/4"]}},
+			"webserver":"com.example.!443",
 			"history":[{"date":"2026-11-02","counts":{"indexed":90,"error":2}},{"date":"2026-10-26","counts":{"indexed":88,"error":2}}]}`)
 	case "/web/documents":
 		fmt.Fprint(w, `{"content":{"count":100,"urls":["https://example.com/1"]},"error":{"count":2,"urls":["https://example.com/4","https://example.com/5"]}}`)
@@ -182,8 +183,11 @@ func TestEnvelopeShape(t *testing.T) {
 		t.Fatalf("env = %v", r.env)
 	}
 	docs := r.data()["documents"].(map[string]any)
-	if docs["doc_count"] != float64(130) {
+	if docs["doc_count"].(map[string]any)["count"] != float64(130) {
 		t.Errorf("undocumented field dropped: %v", docs)
+	}
+	if r.data()["webserver"] != "com.example.!443" {
+		t.Errorf("webserver dropped: %v", r.data())
 	}
 	if _, ok := docs["index"].(map[string]any)["urls"]; ok {
 		t.Error("--counts-only kept urls")
@@ -537,7 +541,7 @@ func TestDeadlineStopsBatchCleanly(t *testing.T) {
 func TestReportFailOn(t *testing.T) {
 	h := newHarness(t)
 	r := h.run("", "report")
-	if r.code != 0 || r.data()["severity"] == nil || r.data()["totals"] == nil {
+	if r.code != 0 || r.data()["severity"] == nil || r.data()["totals"] == nil || r.data()["site"] != "example.com" {
 		t.Fatalf("exit=%d %s", r.code, r.stdout)
 	}
 	if h.run("", "report", "--fail-on", "nonsense").code != apperr.ExitUsage {
@@ -578,8 +582,8 @@ func TestAuthLifecycle(t *testing.T) {
 	if r := h.run("bad-key", "auth", "login", "--profile", "x"); r.code != apperr.ExitAuth {
 		t.Fatalf("invalid key saved: exit=%d", r.code)
 	}
-	r := h.run(testKey+"\n", "auth", "login", "--profile", "shop", "--site", "https://www.Example.com/")
-	if r.code != 0 || r.data()["verified"] != true {
+	r := h.run(testKey+"\n", "auth", "login", "--profile", "shop")
+	if r.code != 0 || r.data()["verified"] != true || r.data()["site"] != "example.com" {
 		t.Fatalf("exit=%d %s", r.code, r.stdout)
 	}
 	path := r.data()["config_path"].(string)
@@ -599,7 +603,7 @@ func TestAuthLifecycle(t *testing.T) {
 	}
 
 	r = h.run("", "auth", "status", "--verify")
-	if r.code != 0 || r.data()["verified"] != true || r.data()["key_fingerprint"] == "" {
+	if r.code != 0 || r.data()["verified"] != true || r.data()["key_fingerprint"] == "" || r.data()["site"] != "example.com" {
 		t.Fatalf("status: %s", r.stdout)
 	}
 
@@ -777,5 +781,146 @@ func TestStdoutIsAlwaysSingleJSONDocument(t *testing.T) {
 		if err := dec.Decode(&second); err == nil {
 			t.Errorf("%v: stdout has more than one document", args)
 		}
+	}
+}
+
+func TestAuthHintsPointAtKeyPage(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("SZWM_API_KEY", "")
+	if r := h.run("", "web"); !strings.Contains(r.stdout, "https://reporter.seznam.cz/wm/web/api-klic") {
+		t.Fatalf("missing key hint: %s", r.stdout)
+	}
+	t.Setenv("SZWM_API_KEY", "wrong")
+	if r := h.run("", "web"); !strings.Contains(r.stdout, "https://reporter.seznam.cz/wm/web/api-klic") {
+		t.Fatalf("rejected key hint: %s", r.stdout)
+	}
+}
+
+func TestDoctorNamesTheSite(t *testing.T) {
+	h := newHarness(t)
+	if r := h.run("", "doctor"); !strings.Contains(r.stdout, "site example.com") {
+		t.Fatalf("stdout = %s", r.stdout)
+	}
+}
+
+// fakeClaude puts a stub claude first on PATH. It records its arguments and
+// behaves like the real command when a server name is already taken.
+func fakeClaude(t *testing.T) (logPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath = filepath.Join(dir, "calls.log")
+	script := `#!/bin/sh
+echo "$*" >> "` + logPath + `"
+marker="` + dir + `/exists"
+case "$2" in
+add)
+  if [ -f "$marker" ]; then echo "MCP server seznam-webmaster already exists in user config" >&2; exit 1; fi
+  touch "$marker" ;;
+remove)
+  rm -f "$marker" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func TestMCPInstallRegistersAbsolutePathReadOnly(t *testing.T) {
+	h := newHarness(t)
+	log := fakeClaude(t)
+	r := h.run("", "mcp", "install")
+	if r.code != 0 || r.data()["registered"] != true || r.data()["read_only"] != true {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+	exe, _ := os.Executable()
+	calls, _ := os.ReadFile(log)
+	want := "mcp add -s user seznam-webmaster -- " + exe + " mcp --read-only\n"
+	if string(calls) != want {
+		t.Fatalf("claude called with %q, want %q", calls, want)
+	}
+	if !filepath.IsAbs(r.data()["command"].(string)) {
+		t.Fatalf("command is not absolute: %v", r.data()["command"])
+	}
+	if strings.Contains(string(calls), testKey) || strings.Contains(r.stdout, "SZWM_API_KEY=") {
+		t.Fatal("the key reached the client configuration")
+	}
+}
+
+func TestMCPInstallOptions(t *testing.T) {
+	h := newHarness(t)
+	log := fakeClaude(t)
+	h.run("key", "auth", "login", "--profile", "shop", "--no-verify")
+	r := h.run("", "mcp", "install", "--allow-writes", "--profile", "shop", "--scope", "local", "--name", "x")
+	if r.code != 0 || r.data()["read_only"] != false {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.HasPrefix(string(calls), "mcp add -s local x -- ") || !strings.HasSuffix(string(calls), " mcp --profile shop\n") {
+		t.Fatalf("calls = %q", calls)
+	}
+	if r := h.run("", "mcp", "install", "--scope", "galaxy"); r.code != apperr.ExitUsage {
+		t.Fatalf("bad scope: exit=%d", r.code)
+	}
+	if r := h.run("", "mcp", "install", "--profile", "nope"); r.code != apperr.ExitUsage {
+		t.Fatalf("unknown profile: exit=%d", r.code)
+	}
+}
+
+func TestMCPInstallReadOnlyWinsOverAllowWrites(t *testing.T) {
+	h := newHarness(t)
+	fakeClaude(t)
+	t.Setenv("SZWM_READ_ONLY", "1")
+	if r := h.run("", "mcp", "install", "--allow-writes"); r.data()["read_only"] != true {
+		t.Fatalf("%s", r.stdout)
+	}
+}
+
+func TestMCPInstallExistingServer(t *testing.T) {
+	h := newHarness(t)
+	log := fakeClaude(t)
+	h.run("", "mcp", "install")
+	r := h.run("", "mcp", "install")
+	if r.code != apperr.ExitUsage || !strings.Contains(r.stdout, "--force") {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+	r = h.run("", "mcp", "install", "--force")
+	if r.code != 0 || r.data()["registered"] != true {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "mcp remove -s user seznam-webmaster") {
+		t.Fatalf("calls = %q", calls)
+	}
+}
+
+func TestMCPInstallPrintChangesNothing(t *testing.T) {
+	h := newHarness(t)
+	log := fakeClaude(t)
+	r := h.run("", "mcp", "install", "--print")
+	if r.code != 0 || r.data()["registered"] != false || r.data()["config"] == nil {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Fatal("--print ran claude")
+	}
+}
+
+func TestMCPInstallWithoutClaude(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("PATH", t.TempDir())
+	r := h.run("", "mcp", "install")
+	if r.code != apperr.ExitUsage || !strings.Contains(r.stdout, "--print") {
+		t.Fatalf("exit=%d %s", r.code, r.stdout)
+	}
+}
+
+func TestMCPInstallWarnsWithoutKey(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("SZWM_API_KEY", "")
+	r := h.run("", "mcp", "install", "--print")
+	if !strings.Contains(r.stdout, "auth_missing") {
+		t.Fatalf("no warning: %s", r.stdout)
 	}
 }

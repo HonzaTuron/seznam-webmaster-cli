@@ -34,13 +34,15 @@ Download a binary for Linux, macOS or Windows from [Releases](https://github.com
 go install github.com/HonzaTuron/seznam-webmaster-cli/cmd/szwm@latest
 ```
 
+`go install` puts the binary in `$(go env GOPATH)/bin`, usually `~/go/bin`. If that directory isn't on your `PATH`, add it or call the binary by its full path.
+
 ## Quick start
 
-1. In [Webmaster](https://reporter.seznam.cz/wm/), pick your site and copy the key from **API > Klíč k API**.
-2. Save it. It is read from stdin, so it stays out of your shell history:
+1. Pick your site in Webmaster and copy its key from **[https://reporter.seznam.cz/wm/web/api-klic](https://reporter.seznam.cz/wm/web/api-klic)**. Each site has its own key.
+2. Save it. It is read from stdin, so it stays out of your shell history. The site is detected from the key:
 
    ```bash
-   printf %s "$KEY" | szwm auth login --profile shop --site example.com
+   printf %s "$KEY" | szwm auth login --profile shop
    ```
 
 3. Check that everything works, then look at the site:
@@ -70,6 +72,7 @@ For scripts and CI, skip the profile and set `SZWM_API_KEY`.
 | `schema [command]` | Machine-readable contract | local | no |
 | `guide` | Agent guide; `--install-skill` installs it | local | no |
 | `mcp` | Run an MCP server on stdio | read/write | |
+| `mcp install` | Register this binary in Claude Code by absolute path | local | no |
 | `version`, `completion` | Version info and shell completion | local | no |
 
 Global flags include `--profile`, `-o/--output`, `--fields`, `--raw`, `--pretty`, `--read-only`, `--timeout`, `--deadline`, `--retries` and `--verbose`. See `szwm schema --fields global_flags`.
@@ -119,12 +122,12 @@ szwm api GET /web/document --param url=https://example.com/
   "error": {
     "code": "auth_invalid",
     "message": "Seznam rejected the API key: API key does not exist.",
-    "hint": "Get the current key under Webmaster > API > Klíč k API, then run `szwm auth login`.",
+    "hint": "Copy the site's current key from https://reporter.seznam.cz/wm/web/api-klic, then run `szwm auth login`.",
     "retryable": false,
     "http_status": 401,
     "exit_code": 3
   },
-  "meta": { "szwm_version": "0.1.0", "duration_ms": 127, "requests": 1, "retries": 0 }
+  "meta": { "szwm_version": "0.2.0", "duration_ms": 127, "requests": 1, "retries": 0 }
 }
 ```
 
@@ -183,23 +186,34 @@ szwm guide --install-skill ~/.claude/skills
 Claude Code:
 
 ```bash
-claude mcp add seznam-webmaster -- szwm mcp --read-only
+szwm mcp install
+claude mcp list
 ```
 
-Other clients:
+`szwm mcp install` registers the binary by its absolute path, so it works even when `szwm` isn't on `PATH`. If it isn't, run it as `~/go/bin/szwm mcp install`. It registers for all your projects; use `--scope local` or `--scope project` to narrow that. Restart any running Claude Code session afterwards.
+
+The server is read-only by default, which means the write tool isn't registered at all and a client can't see it. To allow reindexing:
+
+```bash
+szwm mcp install --allow-writes --force
+```
+
+Keys stay in szwm's own config and are never written to the client's, so run `szwm auth login` for each site first. Without a key the server still connects, but its tools fail with `auth_missing`.
+
+Other clients: `szwm mcp install --print` outputs a ready-made config with the absolute path:
 
 ```json
 {
   "mcpServers": {
     "seznam-webmaster": {
-      "command": "szwm",
+      "command": "/absolute/path/to/szwm",
       "args": ["mcp", "--read-only"]
     }
   }
 }
 ```
 
-Remove `--read-only` to allow reindexing. In read-only mode the write tool is not registered at all, so a client cannot see it.
+Adding it by hand with `claude mcp add seznam-webmaster -- szwm mcp --read-only` works only if `szwm` is on the `PATH` Claude Code sees.
 
 | Tool | What it does | Writes |
 |---|---|---|
@@ -216,13 +230,13 @@ Remove `--read-only` to allow reindexing. In read-only mode the write tool is no
 
 ## Sites and profiles
 
-The API has no site parameter, because the key selects the site. Keep one profile per site:
+Every site has its own key, shown at [https://reporter.seznam.cz/wm/web/api-klic](https://reporter.seznam.cz/wm/web/api-klic) for the selected site. The API has no site parameter, because the key selects the site, so keep one profile per site:
 
 ```bash
-printf %s "$KEY_A" | szwm auth login --profile shop --site example.com --default
-printf %s "$KEY_B" | szwm auth login --profile blog --site example.org
+printf %s "$KEY_A" | szwm auth login --profile shop --default
+printf %s "$KEY_B" | szwm auth login --profile blog
 szwm report --profile blog
-szwm report --profile example.org    # the site works too
+szwm report --profile example.org    # the detected site works too
 ```
 
 The key is resolved in this order, first match wins:
@@ -269,6 +283,7 @@ These thresholds are heuristics of this tool, not Seznam rules.
 - **No key on the command line.** Flags leak into process lists and logs, so there is no `--api-key`.
 - **The key must travel in the URL**, because that is how the API works. `szwm` strips it from error messages and `--verbose` traces.
 - **Stored keys** live in a `0600` config file in plain text. `doctor` fails if the file is readable by others.
+- **Saved Webmaster pages contain keys.** A page saved from the browser includes the API keys of all your sites in its page data, so don't share or commit those files.
 - **Local state** contains only a fingerprint of the key, never the key.
 - **Redirects are never followed**, since following one could send the key elsewhere.
 - **Base URL is restricted** to `https://reporter.seznam.cz` and loopback, so a manipulated agent can't send the key to another host.
@@ -278,24 +293,29 @@ These thresholds are heuristics of this tool, not Seznam rules.
 
 ## Things to know about the API
 
-Verified against the live service unless noted:
+Verified against the live service unless noted. Where the API and its spec disagree, `szwm` follows the API and passes unknown fields through:
 
 - The spec's `basePath` is `/wm-api/wm-api`, but the working prefix is `/wm-api`.
-- Errors carry `detail`, while the published `ProblemResult` schema says `description`. `szwm` reads both.
-- The docs list a `doc_count` category that is missing from the published models. `szwm` passes unknown fields through. Its exact shape is unconfirmed, so both an object and a plain number are accepted.
-- `urls` is a **random sample** of at most 1,000 per category. Two runs can differ, so use `count` for totals and `--sitemap` for an inventory.
+- Errors carry `detail`, a string or a list of strings, while the published `ProblemResult` schema says `description`. `szwm` reads all of these.
+- `doc_count` is a normal `{count, urls}` category, although the published models omit it.
+- `/web` and `/web/document` return an undocumented `webserver` field in reversed form, such as `com.example.!443`. `szwm` turns it into `example.com`.
+- Items in `responseHeaders` are `{name, content}`, not `{name, value}` as published.
+- A URL outside the key's site returns 404 like an unknown page, not the documented 403.
+- `downloadTimestamp` and `indexTimestamp` are Unix seconds. `szwm` adds them as `downloaded_at` and `indexed_at`.
+- `urls` is a **random sample** of at most 1,000 per category, and it can be shorter than `count` even on small sites. Use `count` for totals and `--sitemap` for an inventory.
+- On the site tested, the `content` sample didn't overlap the `index` sample.
 - Data changes only with a release (`szwm database-info`). A reindex request shows up after a later release, so polling within the same one is pointless.
 - Replicas report release times a fraction of a second apart. Compare releases by date.
-- `/web/documents-history` still returns the deprecated `downloaded` category according to the docs. Prefer `doc_count` where it exists.
-- Not documented: the timestamp unit (`szwm` reads large values as milliseconds), the shape of a 429 response and the time the daily quota resets.
+- History rows still include the deprecated `downloaded` category. Prefer `doc_count`.
+- Not documented, and not seen in testing: the shape of a 429 response and the time the daily quota resets.
 
 ## Testing status
 
 The test suite runs the full CLI and MCP server against a local fake API, with the race detector on. Mutation checks confirmed that the tests catch removal of the key redaction, redirect protection, base URL restriction, read-only mode, quota cut-off and bulk confirmation.
 
-The binary has also been run against the live service: public endpoints, the MCP stdio handshake and the failure paths for missing and rejected keys.
+It has also been run against the live service with a real site key: every read command, batches, sitemap input, one real reindex request, the MCP tools and registration in Claude Code. Rate limiting held at 5 requests per second with no retries.
 
-**Successful authenticated calls have not been run against the live API yet**, because that needs a real key. Their response shapes come from Seznam's published spec, so report anything that differs.
+Not seen live, so based on the published spec only: a 403 from a key without write rights, a 204 for a site without data, and any 429 response. Please report anything that differs.
 
 ## Configuration
 

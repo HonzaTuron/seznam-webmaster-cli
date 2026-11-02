@@ -28,23 +28,18 @@ are never printed; szwm shows a fingerprint so that keys can be compared.`,
 	return cmd
 }
 
-// verifyKey makes one authenticated call. 204, 403 and 404 prove that the key
-// itself is accepted, so only 401 counts as a bad key.
-func (a *app) verifyKey(ctx context.Context, key string) error {
+// verifyKey makes one authenticated call and returns the key's site, which is
+// empty if the site has no data yet. Only a 401 counts as a bad key.
+func (a *app) verifyKey(ctx context.Context, key string) (string, error) {
 	client, err := a.newClient(key, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = client.Do(ctx, api.Request{Method: "GET", Path: "/web/documents"})
-	if err == nil {
-		return nil
+	site, err := wm.SiteOf(ctx, client)
+	if apperr.IsCode(err, apperr.CodeForbidden) {
+		return "", nil
 	}
-	e := apperr.From(err)
-	switch e.Code {
-	case apperr.CodeNoDataYet, apperr.CodeNotFound, apperr.CodeForbidden:
-		return nil
-	}
-	return e
+	return site, err
 }
 
 func (a *app) readLoginKey() (string, error) {
@@ -74,16 +69,17 @@ func (a *app) authLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Save an API key as a profile",
-		Long: `Save an API key as a named profile. The key comes from --api-key-file or stdin,
-so it never appears in shell history. It is verified before saving unless
---no-verify is set.`,
-		Example: `  szwm auth login --profile shop --site example.com --api-key-file key.txt
-  printf %s "$KEY" | szwm auth login --profile shop --site example.com`,
+		Long: `Save a site's API key as a named profile. Find the key at
+` + api.KeyURL + `. It comes from --api-key-file or stdin, so it never
+appears in shell history. It is verified before saving, which also detects the
+site, unless --no-verify is set.`,
+		Example: `  printf %s "$KEY" | szwm auth login --profile shop
+  szwm auth login --profile shop --api-key-file key.txt`,
 		Args:        cobra.NoArgs,
-		Annotations: meta("local", "none", "GET /web/documents", "true", "1", "{profile, site, default, verified, key_fingerprint, config_path}"),
+		Annotations: meta("local", "none", "GET /web", "true", "1", "{profile, site, default, verified, key_fingerprint, config_path}"),
 	}
 	f := cmd.Flags()
-	f.StringVar(&site, "site", "", "site domain; --profile then also accepts this value")
+	f.StringVar(&site, "site", "", "site domain, detected automatically when the key is verified; --profile also accepts it")
 	f.BoolVar(&noVerify, "no-verify", false, "save without calling the API")
 	f.BoolVar(&setDefault, "default", false, "make this the default profile")
 	cmd.RunE = a.wrap(func(ctx context.Context, _ *cobra.Command, _ []string) (outcome, error) {
@@ -100,8 +96,12 @@ so it never appears in shell history. It is verified before saving unless
 				WithHint("Pipe the key to stdin or pass --api-key-file.")
 		}
 		if !noVerify {
-			if err := a.verifyKey(ctx, key); err != nil {
+			detected, err := a.verifyKey(ctx, key)
+			if err != nil {
 				return outcome{}, err
+			}
+			if site == "" {
+				site = detected
 			}
 		}
 		cfg, err := config.Load()
@@ -131,7 +131,7 @@ func (a *app) authStatusCmd() *cobra.Command {
 		Short:       "Show which key would be used, without revealing it",
 		Example:     "  szwm auth status --verify --fields authenticated,source",
 		Args:        cobra.NoArgs,
-		Annotations: meta("local", "optional", "GET /web/documents", "true", "0, or 1 with --verify", "{authenticated, key_fingerprint, source, verified}"),
+		Annotations: meta("local", "optional", "GET /web", "true", "0, or 1 with --verify", "{authenticated, key_fingerprint, source, verified, site}"),
 	}
 	cmd.Flags().BoolVar(&verify, "verify", false, "check the key against the API")
 	cmd.RunE = a.wrap(func(ctx context.Context, _ *cobra.Command, _ []string) (outcome, error) {
@@ -146,10 +146,14 @@ func (a *app) authStatusCmd() *cobra.Command {
 		}
 		data["key_fingerprint"] = config.Fingerprint(res.Key)
 		if verify {
-			if err := a.verifyKey(ctx, res.Key); err != nil {
+			site, err := a.verifyKey(ctx, res.Key)
+			if err != nil {
 				return outcome{}, err
 			}
 			data["verified"] = true
+			if site != "" {
+				data["site"] = site
+			}
 		}
 		return outcome{res: wm.Result{Data: data}}, nil
 	})

@@ -60,11 +60,12 @@ func TestStatusMapping(t *testing.T) {
 
 func TestProblemDetailFields(t *testing.T) {
 	cases := map[string]string{
-		`{"detail":"live field"}`:      "live field",
-		`{"description":"spec field"}`: "spec field",
-		`{"title":"only title"}`:       "only title",
-		`not json`:                     "not json",
-		``:                             "empty response body",
+		`{"detail":"live field"}`:            "live field",
+		`{"description":"spec field"}`:       "spec field",
+		`{"detail":["bad date","notadate"]}`: "bad date; notadate",
+		`{"title":"only title"}`:             "only title",
+		`not json`:                           "not json",
+		``:                                   "empty response body",
 	}
 	for body, want := range cases {
 		if got := problemDetail([]byte(body)); got != want {

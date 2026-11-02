@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -213,6 +214,46 @@ func historyDate(v any) string {
 		}
 	}
 	return ""
+}
+
+// SiteFromWebserver converts the API's reversed form, such as
+// com.example.!443, into a host name such as example.com.
+func SiteFromWebserver(v string) string {
+	parts := strings.Split(v, ".")
+	if n := len(parts); strings.HasPrefix(parts[n-1], "!") {
+		parts = parts[:n-1]
+	}
+	slices.Reverse(parts)
+	return strings.Join(parts, ".")
+}
+
+// Site returns the host name of the site the key belongs to. It returns "" when
+// the key is accepted but the site has no data yet.
+func (s *Service) Site(ctx context.Context) (string, error) {
+	return SiteOf(ctx, s.API)
+}
+
+// SiteOf is Site for a bare client, used to check a key before it is saved.
+func SiteOf(ctx context.Context, c *api.Client) (string, error) {
+	resp, err := c.Do(ctx, api.Request{Method: "GET", Path: "/web"})
+	if err != nil {
+		e := apperr.From(err)
+		switch e.Code {
+		case apperr.CodeNoDataYet, apperr.CodeNotFound:
+			return "", nil
+		}
+		return "", err
+	}
+	v, err := api.Decode(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if m, ok := v.(map[string]any); ok {
+		if w, ok := m["webserver"].(string); ok {
+			return SiteFromWebserver(w), nil
+		}
+	}
+	return "", nil
 }
 
 var lastRe = regexp.MustCompile(`^(\d{1,4})([dw])$`)

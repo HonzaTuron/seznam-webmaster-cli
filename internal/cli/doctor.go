@@ -34,7 +34,7 @@ failed; warnings do not fail. spec_drift compares the live swagger.json with the
 snapshot szwm was built against, so upstream API changes surface early.`,
 		Example:     "  szwm doctor --fields checks.name,checks.status,checks.fix",
 		Args:        cobra.NoArgs,
-		Annotations: meta("read", "optional", "GET /__healthcheck, GET /database-info, GET /web/documents, GET /swagger.json", "true", "4", "{checks[]: {name, status, detail, fix}}"),
+		Annotations: meta("read", "optional", "GET /__healthcheck, GET /database-info, GET /web, GET /swagger.json", "true", "4", "{checks[]: {name, status, detail, fix}}"),
 	}
 	cmd.RunE = a.wrap(func(ctx context.Context, _ *cobra.Command, _ []string) (outcome, error) {
 		checks := a.runChecks(ctx)
@@ -140,15 +140,15 @@ func checkRelease(ctx context.Context, svc *wm.Service) check {
 }
 
 func checkKey(ctx context.Context, svc *wm.Service) check {
-	_, err := svc.API.Do(ctx, api.Request{Method: "GET", Path: "/web/documents"})
+	site, err := svc.Site(ctx)
 	if err == nil {
-		return check{Name: "api_key_valid", Status: "pass"}
+		if site == "" {
+			return check{Name: "api_key_valid", Status: "pass", Detail: "key accepted; site has no data yet"}
+		}
+		return check{Name: "api_key_valid", Status: "pass", Detail: "site " + site}
 	}
 	e := apperr.From(err)
-	switch e.Code {
-	case apperr.CodeNoDataYet, apperr.CodeNotFound:
-		return check{Name: "api_key_valid", Status: "pass", Detail: "key accepted; site has no data yet"}
-	case apperr.CodeAuthInvalid:
+	if e.Code == apperr.CodeAuthInvalid {
 		return check{Name: "api_key_valid", Status: "fail", Detail: e.Message, Fix: e.Hint}
 	}
 	return check{Name: "api_key_valid", Status: "warn", Detail: e.Message}

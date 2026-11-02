@@ -31,6 +31,9 @@ import (
 // (/wm-api/wm-api) is wrong: the working prefix is a single /wm-api.
 const DefaultBaseURL = "https://reporter.seznam.cz/wm-api"
 
+// KeyURL is where a user finds the API key of the selected site.
+const KeyURL = "https://reporter.seznam.cz/wm/web/api-klic"
+
 // AllowAnyBaseURLEnv opts out of the base URL host restriction.
 const AllowAnyBaseURLEnv = "SZWM_INSECURE_ALLOW_ANY_BASE_URL"
 
@@ -195,7 +198,7 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 // MissingKeyError is the error for a call that needs a key but has none.
 func MissingKeyError() *apperr.Error {
 	return apperr.New(apperr.CodeAuthMissing, "no API key configured").
-		WithHint("Set SZWM_API_KEY, pass --api-key-file, or run `szwm auth login --profile <site>`.")
+		WithHint("Copy the site's key from " + KeyURL + ", then run `szwm auth login --profile <site>` or set SZWM_API_KEY.")
 }
 
 func shouldRetry(ctx context.Context, e *apperr.Error) bool {
@@ -283,10 +286,10 @@ func (c *Client) interpret(resp *http.Response, body []byte) (*Response, error) 
 		e = apperr.New(apperr.CodeInvalidArgument, "Seznam rejected the request: %s", detail)
 	case st == http.StatusUnauthorized:
 		e = apperr.New(apperr.CodeAuthInvalid, "Seznam rejected the API key: %s", detail).
-			WithHint("Get the current key under Webmaster > API > Klíč k API, then run `szwm auth login`.")
+			WithHint("Copy the site's current key from " + KeyURL + ", then run `szwm auth login`.")
 	case st == http.StatusForbidden:
 		e = apperr.New(apperr.CodeForbidden, "access denied: %s", detail).
-			WithHint("The URL must belong to this key's site; reindexing needs admin or write rights.")
+			WithHint("Reindexing needs admin or write rights on the site.")
 	case st == http.StatusNotFound:
 		e = apperr.New(apperr.CodeNotFound, "not found: %s", detail)
 	case st == http.StatusTooManyRequests:
@@ -305,15 +308,16 @@ func (c *Client) interpret(resp *http.Response, body []byte) (*Response, error) 
 }
 
 // problemDetail extracts the message from an RFC 7807 body. The live API uses
-// `detail`, while the published ProblemResult schema says `description`.
+// `detail`, as a string or a list of strings, while the published ProblemResult
+// schema says `description`.
 func problemDetail(body []byte) string {
 	var p struct {
-		Detail      string `json:"detail"`
+		Detail      any    `json:"detail"`
 		Description string `json:"description"`
 		Title       string `json:"title"`
 	}
 	if json.Unmarshal(body, &p) == nil {
-		for _, s := range []string{p.Detail, p.Description, p.Title} {
+		for _, s := range []string{detailText(p.Detail), p.Description, p.Title} {
 			if s != "" {
 				return s
 			}
@@ -327,6 +331,22 @@ func problemDetail(body []byte) string {
 		return "empty response body"
 	}
 	return s
+}
+
+func detailText(v any) string {
+	switch d := v.(type) {
+	case string:
+		return d
+	case []any:
+		parts := make([]string, 0, len(d))
+		for _, e := range d {
+			if s, ok := e.(string); ok && s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "; ")
+	}
+	return ""
 }
 
 func (c *Client) transportError(ctx context.Context, err error) error {

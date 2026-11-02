@@ -225,3 +225,24 @@ func TestEstimateSeconds(t *testing.T) {
 		}
 	}
 }
+
+func TestSiteFromWebserver(t *testing.T) {
+	cases := map[string]string{
+		"com.example.!443":    "example.com",
+		"com.example.www.!80": "www.example.com",
+		"cz.example":          "example.cz",
+		"":                    "",
+	}
+	for in, want := range cases {
+		if got := SiteFromWebserver(in); got != want {
+			t.Errorf("%q = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestEvaluateNamesTheSite(t *testing.T) {
+	web := decode(t, `{"webserver":"com.example.!443","documents":{},"history":[]}`)
+	if r := Evaluate(web, "", 7, now); r.Site != "example.com" {
+		t.Fatalf("site = %q", r.Site)
+	}
+}

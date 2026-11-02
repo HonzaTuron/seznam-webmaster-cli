@@ -34,13 +34,15 @@ Stáhněte si binárku pro Linux, macOS nebo Windows z [Releases](https://github
 go install github.com/HonzaTuron/seznam-webmaster-cli/cmd/szwm@latest
 ```
 
+`go install` uloží binárku do `$(go env GOPATH)/bin`, obvykle `~/go/bin`. Pokud tento adresář nemáte v `PATH`, přidejte ho tam, nebo binárku volejte celou cestou.
+
 ## Rychlý start
 
-1. Ve [Webmasteru](https://reporter.seznam.cz/wm/) vyberte web a zkopírujte klíč v části **API > Klíč k API**.
-2. Uložte ho. Čte se ze standardního vstupu, takže se nedostane do historie shellu:
+1. Ve Webmasteru vyberte web a zkopírujte jeho klíč na stránce **[https://reporter.seznam.cz/wm/web/api-klic](https://reporter.seznam.cz/wm/web/api-klic)**. Každý web má vlastní klíč.
+2. Uložte ho. Čte se ze standardního vstupu, takže se nedostane do historie shellu. Web se zjistí z klíče:
 
    ```bash
-   printf %s "$KEY" | szwm auth login --profile shop --site example.com
+   printf %s "$KEY" | szwm auth login --profile shop
    ```
 
 3. Ověřte, že vše funguje, a podívejte se na web:
@@ -70,6 +72,7 @@ Ve skriptech a CI se profil nemusí používat, stačí nastavit `SZWM_API_KEY`.
 | `schema [příkaz]` | Strojově čitelný kontrakt | lokální | ne |
 | `guide` | Návod pro agenty, `--install-skill` ho nainstaluje | lokální | ne |
 | `mcp` | Spustí MCP server na stdio | čtení/zápis | |
+| `mcp install` | Zaregistruje tuto binárku v Claude Code absolutní cestou | lokální | ne |
 | `version`, `completion` | Informace o verzi a doplňování v shellu | lokální | ne |
 
 Mezi globální přepínače patří `--profile`, `-o/--output`, `--fields`, `--raw`, `--pretty`, `--read-only`, `--timeout`, `--deadline`, `--retries` a `--verbose`. Úplný seznam vypíše `szwm schema --fields global_flags`.
@@ -119,12 +122,12 @@ szwm api GET /web/document --param url=https://example.com/
   "error": {
     "code": "auth_invalid",
     "message": "Seznam rejected the API key: API key does not exist.",
-    "hint": "Get the current key under Webmaster > API > Klíč k API, then run `szwm auth login`.",
+    "hint": "Copy the site's current key from https://reporter.seznam.cz/wm/web/api-klic, then run `szwm auth login`.",
     "retryable": false,
     "http_status": 401,
     "exit_code": 3
   },
-  "meta": { "szwm_version": "0.1.0", "duration_ms": 127, "requests": 1, "retries": 0 }
+  "meta": { "szwm_version": "0.2.0", "duration_ms": 127, "requests": 1, "retries": 0 }
 }
 ```
 
@@ -185,23 +188,34 @@ szwm guide --install-skill ~/.claude/skills
 Claude Code:
 
 ```bash
-claude mcp add seznam-webmaster -- szwm mcp --read-only
+szwm mcp install
+claude mcp list
 ```
 
-Ostatní klienti:
+`szwm mcp install` zaregistruje binárku absolutní cestou, takže funguje, i když `szwm` není v `PATH`. V takovém případě ho spusťte jako `~/go/bin/szwm mcp install`. Registruje se pro všechny vaše projekty, zúžit to můžete přes `--scope local` nebo `--scope project`. Běžící relaci Claude Code potom restartujte.
+
+Server je ve výchozím stavu jen pro čtení, takže se zapisovací nástroj vůbec nezaregistruje a klient ho ani neuvidí. Povolení reindexace:
+
+```bash
+szwm mcp install --allow-writes --force
+```
+
+Klíče zůstávají ve vlastní konfiguraci szwm a do konfigurace klienta se nikdy nezapisují, takže nejdřív spusťte `szwm auth login` pro každý web. Bez klíče se server sice připojí, ale jeho nástroje skončí chybou `auth_missing`.
+
+Ostatní klienti: `szwm mcp install --print` vypíše hotovou konfiguraci s absolutní cestou:
 
 ```json
 {
   "mcpServers": {
     "seznam-webmaster": {
-      "command": "szwm",
+      "command": "/absolutni/cesta/k/szwm",
       "args": ["mcp", "--read-only"]
     }
   }
 }
 ```
 
-Pokud chcete povolit reindexaci, odeberte `--read-only`. V režimu jen pro čtení se zapisovací nástroj vůbec nezaregistruje, takže ho klient ani neuvidí.
+Ruční přidání přes `claude mcp add seznam-webmaster -- szwm mcp --read-only` funguje jen tehdy, když je `szwm` v `PATH`, který Claude Code vidí.
 
 | Nástroj | Co dělá | Zapisuje |
 |---|---|---|
@@ -218,13 +232,13 @@ Pokud chcete povolit reindexaci, odeberte `--read-only`. V režimu jen pro čten
 
 ## Weby a profily
 
-API nemá parametr pro výběr webu, web určuje klíč. Pro každý web si proto založte jeden profil:
+Každý web má vlastní klíč, který pro vybraný web najdete na [https://reporter.seznam.cz/wm/web/api-klic](https://reporter.seznam.cz/wm/web/api-klic). API nemá parametr pro výběr webu, web určuje klíč. Pro každý web si proto založte jeden profil:
 
 ```bash
-printf %s "$KEY_A" | szwm auth login --profile shop --site example.com --default
-printf %s "$KEY_B" | szwm auth login --profile blog --site example.org
+printf %s "$KEY_A" | szwm auth login --profile shop --default
+printf %s "$KEY_B" | szwm auth login --profile blog
 szwm report --profile blog
-szwm report --profile example.org    # funguje i název webu
+szwm report --profile example.org    # funguje i zjištěný název webu
 ```
 
 Klíč se hledá v tomto pořadí a použije se první nalezený:
@@ -271,6 +285,7 @@ Tyto prahy jsou heuristiky tohoto nástroje, ne pravidla Seznamu.
 - **Žádný klíč na příkazové řádce.** Přepínače unikají do seznamu procesů a logů, proto `--api-key` neexistuje.
 - **Klíč musí cestovat v URL**, protože tak API funguje. `szwm` ho odstraňuje z chybových zpráv i z trasování `--verbose`.
 - **Uložené klíče** jsou v konfiguračním souboru s právy `0600` jako prostý text. `doctor` selže, pokud je soubor čitelný pro ostatní.
+- **Uložené stránky Webmasteru obsahují klíče.** Stránka uložená z prohlížeče má v datech stránky API klíče všech vašich webů, takže takové soubory nesdílejte ani necommitujte.
 - **Místní stav** obsahuje jen otisk klíče, nikdy klíč samotný.
 - **Přesměrování se nikdy nenásledují**, protože by tím klíč mohl odejít jinam.
 - **Základní URL je omezená** na `https://reporter.seznam.cz` a loopback, takže zmanipulovaný agent nemůže poslat klíč na jiný server.
@@ -280,24 +295,29 @@ Tyto prahy jsou heuristiky tohoto nástroje, ne pravidla Seznamu.
 
 ## Co vědět o API
 
-Není-li uvedeno jinak, ověřeno proti živé službě:
+Není-li uvedeno jinak, ověřeno proti živé službě. Kde se API a jeho specifikace rozcházejí, `szwm` se řídí API a neznámá pole propouští:
 
 - `basePath` ve specifikaci je `/wm-api/wm-api`, ale funkční prefix je `/wm-api`.
-- Chyby obsahují pole `detail`, zatímco zveřejněné schéma `ProblemResult` uvádí `description`. `szwm` čte obojí.
-- Dokumentace zmiňuje kategorii `doc_count`, která ve zveřejněných modelech chybí. `szwm` neznámá pole propouští. Její přesná podoba není potvrzená, proto přijímá objekt i prosté číslo.
-- `urls` je **náhodný vzorek** nejvýše 1 000 URL na kategorii. Dva běhy se mohou lišit, takže pro součty použijte `count` a pro úplný soupis `--sitemap`.
+- Chyby obsahují pole `detail`, a to jako text nebo seznam textů, zatímco zveřejněné schéma `ProblemResult` uvádí `description`. `szwm` čte všechny tyto podoby.
+- `doc_count` je běžná kategorie `{count, urls}`, i když ve zveřejněných modelech chybí.
+- `/web` a `/web/document` vracejí nezdokumentované pole `webserver` v obráceném tvaru, například `com.example.!443`. `szwm` z něj udělá `example.com`.
+- Položky v `responseHeaders` mají tvar `{name, content}`, ne `{name, value}`, jak uvádí specifikace.
+- URL mimo web daného klíče vrací 404 stejně jako neznámá stránka, ne zdokumentovaný kód 403.
+- `downloadTimestamp` a `indexTimestamp` jsou unixové sekundy. `szwm` k nim přidává `downloaded_at` a `indexed_at`.
+- `urls` je **náhodný vzorek** nejvýše 1 000 URL na kategorii a i u malých webů může být kratší než `count`. Pro součty použijte `count` a pro úplný soupis `--sitemap`.
+- Na testovaném webu se vzorky `content` a `index` nepřekrývaly.
 - Data se mění jen s vydáním (`szwm database-info`). Žádost o reindexaci se projeví až v některém pozdějším vydání, takže opakované dotazování v rámci jednoho vydání nemá smysl.
 - Repliky hlásí časy vydání lišící se o zlomek vteřiny. Vydání porovnávejte podle data.
-- `/web/documents-history` podle dokumentace dál vrací zastaralou kategorii `downloaded`. Kde je k dispozici `doc_count`, dejte mu přednost.
-- Nezdokumentováno: jednotka časových razítek (`szwm` čte velké hodnoty jako milisekundy), podoba odpovědi 429 a čas obnovení denní kvóty.
+- Řádky historie stále obsahují zastaralou kategorii `downloaded`. Dejte přednost `doc_count`.
+- Nezdokumentováno a při testech nezjištěno: podoba odpovědi 429 a čas obnovení denní kvóty.
 
 ## Stav testování
 
 Testy spouštějí celé CLI i MCP server proti lokálnímu falešnému API se zapnutým detektorem souběhů. Mutační kontroly potvrdily, že testy zachytí odstranění maskování klíče, ochrany proti přesměrování, omezení základní URL, režimu jen pro čtení, zkrácení podle kvóty i potvrzování hromadných operací.
 
-Binárka běžela i proti živé službě: veřejné endpointy, MCP handshake přes stdio a chybové cesty pro chybějící a odmítnutý klíč.
+Nástroj běžel i proti živé službě se skutečným klíčem webu: všechny čtecí příkazy, dávky, vstup ze sitemapy, jedna skutečná žádost o reindexaci, MCP nástroje i registrace v Claude Code. Limit 5 dotazů za vteřinu se dodržel bez jediného opakování.
 
-**Úspěšná autentizovaná volání zatím proti živému API neproběhla**, protože k tomu je potřeba skutečný klíč. Podoba jejich odpovědí vychází ze zveřejněné specifikace Seznamu, takže pokud narazíte na rozdíl, nahlaste ho.
+Naživo neověřeno, takže jen podle zveřejněné specifikace: 403 u klíče bez práva zápisu, 204 u webu bez dat a jakákoli odpověď 429. Pokud narazíte na rozdíl, nahlaste ho.
 
 ## Konfigurace
 

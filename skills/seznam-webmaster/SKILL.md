@@ -16,13 +16,13 @@ szwm doctor --fields checks.name,checks.status,checks.fix   # setup problems, ea
 szwm report                                                 # site health: the best first call
 ```
 
-No key? Tell the user to copy it from Webmaster > API > Klíč k API, then:
+No key? Ask the user to copy it from https://reporter.seznam.cz/wm/web/api-klic, then:
 
 ```bash
-printf %s "$KEY" | szwm auth login --profile <name> --site <domain>
+printf %s "$KEY" | szwm auth login --profile <name>
 ```
 
-Each site has its own profile. Pass `--profile <name-or-domain>` when several exist (`szwm auth list`).
+Each site has its own key, so keep one profile per site; the site is detected from the key. Pass `--profile <name-or-domain>` when several exist (`szwm auth list`).
 
 ## Reading results
 
@@ -81,8 +81,10 @@ szwm reindex --file todo.ndjson --yes --deadline 10m
 
 ## MCP
 
-`szwm mcp` runs a stdio MCP server with the same behaviour. Add `--read-only` to leave out the reindex tool:
+`szwm mcp` runs a stdio MCP server with the same behaviour. Register it in Claude Code with:
 
 ```bash
-claude mcp add seznam-webmaster -- szwm mcp --read-only
+szwm mcp install                # read-only; add --allow-writes for reindexing
 ```
+
+It uses the binary's absolute path, so `szwm` need not be on PATH. `szwm mcp install --print` gives the config for other clients.
